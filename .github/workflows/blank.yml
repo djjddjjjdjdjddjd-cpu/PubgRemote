@@ -14,16 +14,118 @@ jobs:
       - uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: 8.5
-      - name: Loyiha papkasini topish
+      - name: Loyihani yig'ish
         run: |
-          F=$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)
-          echo "Topilgan: $F"
-          echo "PROJECT_DIR=$(dirname "$F")" >> $GITHUB_ENV
-          ls -R . | head -50
+          set -e
+          P=$GITHUB_WORKSPACE/proj
+          S=$P/app/src/main
+          mkdir -p $S/java/uz/lx7/pubgremote $S/res/xml $S/res/values
+          for f in CaptureService.kt MainActivity.kt RemoteControlService.kt; do
+            src=$(find . -name "$f" -not -path './proj/*' | head -1)
+            cp "$src" $S/java/uz/lx7/pubgremote/$f
+          done
+          C=$S/java/uz/lx7/pubgremote/CaptureService.kt
+          if ! grep -q FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION $C; then
+            sed -i 's/startForeground(1,n)/if (Build.VERSION.SDK_INT>=29) startForeground(1,n,android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) else startForeground(1,n)/' $C
+            sed -i 's/projection=mgr.getMediaProjection(result,data)/&\n            projection?.registerCallback(object: MediaProjection.Callback(){ override fun onStop(){ stopSelf() } }, null)/' $C
+          fi
+          cat > $P/settings.gradle.kts <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "PubgRemote"
+          include(":app")
+          EOF
+          cat > $P/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          EOF
+          cat > $P/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=true
+          EOF
+          cat > $P/app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "uz.lx7.pubgremote"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "uz.lx7.pubgremote"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          dependencies {
+              implementation("com.squareup.okhttp3:okhttp:4.12.0")
+          }
+          EOF
+          cat > $S/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <application
+                  android:label="PUBG Remote"
+                  android:usesCleartextTraffic="true"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".CaptureService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaProjection" />
+                  <service
+                      android:name=".RemoteControlService"
+                      android:exported="true"
+                      android:label="PUBG Remote boshqaruv"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_config" />
+                  </service>
+              </application>
+          </manifest>
+          EOF
+          cat > $S/res/xml/accessibility_config.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:accessibilityEventTypes="typeAllMask"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:canPerformGestures="true"
+              android:description="@string/accessibility_desc"
+              android:notificationTimeout="100" />
+          EOF
+          cat > $S/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="accessibility_desc">PC dan yuborilgan bosishlarni shu telefonda bajaradi.</string>
+          </resources>
+          EOF
+          find $P -type f | sort
       - name: APK yig'ish
-        working-directory: ${{ env.PROJECT_DIR }}
+        working-directory: proj
         run: gradle assembleDebug --no-daemon --console=plain
       - uses: actions/upload-artifact@v4
         with:
           name: PubgRemote-apk
-          path: "**/app-debug.apk"
+          path: proj/app/build/outputs/apk/debug/app-debug.apk
